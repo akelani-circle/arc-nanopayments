@@ -36,7 +36,6 @@ const buyer = generateWallet("Buyer (funder wallet)");
 const lines: Record<string, string> = {
   SELLER_ADDRESS: seller.address,
   SELLER_PRIVATE_KEY: seller.privateKey,
-  BUYER_ADDRESS: buyer.address,
   BUYER_PRIVATE_KEY: buyer.privateKey,
 };
 
