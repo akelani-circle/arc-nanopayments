@@ -1,0 +1,29 @@
+-- Copyright 2026 Circle Internet Group, Inc.  All rights reserved.
+--
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--
+--     http://www.apache.org/licenses/LICENSE-2.0
+--
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+--
+-- SPDX-License-Identifier: Apache-2.0
+
+-- The dashboard is a public, read-only view of payment_events and withdrawals,
+-- so the `anon` role must keep SELECT on both tables. That privilege also makes
+-- them introspectable through pg_graphql, which trips database linter rules
+-- 0026 and 0027 (object visible in the GraphQL schema).
+--
+-- Nothing in this project talks to /graphql/v1: reads go through PostgREST and
+-- Realtime, writes go through the service role in the API routes. Removing the
+-- extension drops the unused GraphQL endpoint and the introspection surface
+-- with it, and leaves REST and Realtime untouched.
+--
+-- `cascade` also drops graphql_public.graphql(), the RPC wrapper that forwards
+-- to graphql.resolve(), and the graphql_watch event trigger.
+drop extension if exists pg_graphql cascade;
