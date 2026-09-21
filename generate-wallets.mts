@@ -1,6 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 const envPath = path.resolve(".env.local");
 
@@ -42,6 +43,12 @@ const lines: Record<string, string> = {
 let content = fs.existsSync(envPath)
   ? fs.readFileSync(envPath, "utf-8")
   : "";
+
+// Signs dashboard sessions. Created once; never rotated here, or every
+// signed-in browser would be logged out each time wallets are regenerated.
+if (!/^SESSION_SECRET=.{16,}$/m.test(content)) {
+  lines.SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+}
 
 for (const [key, value] of Object.entries(lines)) {
   const line = `${key}=${value}`;

@@ -19,13 +19,20 @@
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import { isAddress } from "viem";
 
 // Arc Testnet contract addresses (from @circle-fin/x402-batching SDK)
 const ARC_TESTNET_NETWORK = "eip155:5042002";
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000";
 const ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9";
 
-export const sellerAddress = process.env.SELLER_ADDRESS as `0x${string}`;
+/** The seller wallet that receives payments, or null if SELLER_ADDRESS is missing or malformed. */
+function getSellerAddress(): `0x${string}` | null {
+  const address = process.env.SELLER_ADDRESS;
+  return address && isAddress(address, { strict: false })
+    ? (address as `0x${string}`)
+    : null;
+}
 
 const facilitator = new BatchFacilitatorClient();
 
@@ -42,7 +49,7 @@ interface PaymentPayload {
   extensions?: Record<string, unknown>;
 }
 
-function buildPaymentRequirements(price: string) {
+function buildPaymentRequirements(price: string, sellerAddress: `0x${string}`) {
   // Parse dollar amount to USDC atomic units (6 decimals)
   const amount = Math.round(parseFloat(price.replace("$", "")) * 1_000_000);
 
@@ -72,9 +79,19 @@ export function withGateway(
   price: string,
   endpoint: string,
 ) {
-  const requirements = buildPaymentRequirements(price);
-
   return async (req: NextRequest) => {
+    // Resolved per request so a missing SELLER_ADDRESS is a clear 500, never a
+    // payment addressed to "undefined".
+    const sellerAddress = getSellerAddress();
+    if (!sellerAddress) {
+      console.error("[x402] SELLER_ADDRESS is missing or not a valid address");
+      return NextResponse.json(
+        { error: "Payment receiver is not configured" },
+        { status: 500 },
+      );
+    }
+    const requirements = buildPaymentRequirements(price, sellerAddress);
+
     const paymentSignature = req.headers.get("payment-signature");
 
     // No payment — return 402 with Gateway batching payment requirements

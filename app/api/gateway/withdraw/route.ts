@@ -23,6 +23,9 @@ import {
   GATEWAY_DOMAINS,
 } from "@circle-fin/x402-batching/client";
 import { createClient } from "@supabase/supabase-js";
+import { isAddress, parseUnits } from "viem";
+import { requireSession } from "@/lib/auth";
+import { parseUsdcAmount } from "@/lib/validation";
 
 const SUPPORTED_CHAIN_LABELS: Record<string, string> = {
   arcTestnet: "Arc Testnet",
@@ -40,6 +43,9 @@ const supabase = createClient(
 );
 
 export async function POST(req: NextRequest) {
+  const denied = await requireSession();
+  if (denied) return denied;
+
   const privateKey = process.env.SELLER_PRIVATE_KEY;
   if (!privateKey) {
     return NextResponse.json(
@@ -48,23 +54,49 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = await req.json();
-  const { amount, destinationChain, destinationAddress } = body as {
-    amount: string;
-    destinationChain: string;
-    destinationAddress?: string;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  const { destinationChain, destinationAddress } = body as {
+    destinationChain?: unknown;
+    destinationAddress?: unknown;
   };
 
-  if (!amount || !destinationChain) {
+  const parsedAmount = parseUsdcAmount((body as { amount?: unknown }).amount);
+  if (!parsedAmount) {
+    return NextResponse.json(
+      {
+        error:
+          "amount must be a positive USDC amount with at most 6 decimal places",
+      },
+      { status: 400 },
+    );
+  }
+  const amount = parsedAmount.value;
+
+  if (typeof destinationChain !== "string" || !destinationChain) {
     return NextResponse.json(
       { error: "amount and destinationChain are required" },
       { status: 400 },
     );
   }
 
-  if (!(destinationChain in GATEWAY_DOMAINS)) {
+  // hasOwn, not `in`: "constructor" and "toString" are `in` every object.
+  if (!Object.hasOwn(GATEWAY_DOMAINS, destinationChain)) {
     return NextResponse.json(
       { error: `Unsupported chain: ${destinationChain}` },
+      { status: 400 },
+    );
+  }
+
+  if (
+    destinationAddress !== undefined &&
+    (typeof destinationAddress !== "string" ||
+      !isAddress(destinationAddress, { strict: false }))
+  ) {
+    return NextResponse.json(
+      { error: "destinationAddress must be a valid 0x address" },
       { status: 400 },
     );
   }
@@ -91,8 +123,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const availableUsdc = Number(balances.gateway.formattedAvailable);
-    if (availableUsdc < Number(amount)) {
+    const availableMicro = parseUnits(balances.gateway.formattedAvailable, 6);
+    if (availableMicro < parsedAmount.micro) {
       return NextResponse.json(
         {
           error: `Insufficient gateway balance: ${balances.gateway.formattedAvailable} USDC available, tried to withdraw ${amount} USDC.`,
@@ -139,7 +171,7 @@ export async function POST(req: NextRequest) {
     .insert({
       amount_usdc: amount,
       destination_chain: destinationChain,
-      destination_address: destinationAddress ?? gateway.address,
+      destination_address: (destinationAddress as string | undefined) ?? gateway.address,
       status: "submitted",
     })
     .select()
@@ -160,11 +192,18 @@ export async function POST(req: NextRequest) {
         : undefined,
     });
 
-    // Update the withdrawal record with the transaction hash
-    await supabase
+    // Update the withdrawal record with the transaction hash. The funds have
+    // already moved, so a failure here must be loud but must not fail the request.
+    const { error: confirmError } = await supabase
       .from("withdrawals")
       .update({ status: "confirmed", tx_hash: result.mintTxHash })
       .eq("id", withdrawal.id);
+    if (confirmError) {
+      console.error(
+        `CRITICAL: withdrawal ${withdrawal.id} succeeded (${result.mintTxHash}) but could not be marked confirmed:`,
+        confirmError.message,
+      );
+    }
 
     return NextResponse.json({
       id: withdrawal.id,
@@ -179,10 +218,16 @@ export async function POST(req: NextRequest) {
     const raw = error instanceof Error ? error.message : String(error);
 
     // Mark withdrawal as failed
-    await supabase
+    const { error: failError } = await supabase
       .from("withdrawals")
       .update({ status: "failed" })
       .eq("id", withdrawal.id);
+    if (failError) {
+      console.error(
+        `Withdrawal ${withdrawal.id} failed and could not be marked failed:`,
+        failError.message,
+      );
+    }
 
     // Translate common on-chain errors into user-friendly messages
     const chainLabel =

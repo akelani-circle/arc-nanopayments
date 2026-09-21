@@ -13,9 +13,11 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 - [Getting Started](#getting-started)
 - [How It Works](#how-it-works)
 - [Paywalled Endpoints](#paywalled-endpoints)
+- [Upgrading](#upgrading)
 - [Environment Variables](#environment-variables)
 - [User Accounts](#user-accounts)
 - [Available Scripts](#available-scripts)
+- [Testing](#testing)
 - [Security & Usage Model](#security--usage-model)
 
 ## Features
@@ -29,8 +31,7 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 
 ## Prerequisites
 
-- **Node.js v22+** — Install via [nvm](https://github.com/nvm-sh/nvm)
-- **Supabase CLI** — Install via `npm install -g supabase` or see [Supabase CLI docs](https://supabase.com/docs/guides/cli/getting-started)
+- **Node.js v22+** — Install via [nvm](https://github.com/nvm-sh/nvm) (`nvm use` reads the `.nvmrc` file)
 - **Docker Desktop** — [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ## Getting Started
@@ -57,16 +58,15 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
    npm run generate-wallets
    ```
 
-   This creates two EVM wallets (seller and buyer) and writes the seller address and both private keys to `.env.local`. Follow the on-screen instructions to fund the buyer wallet with testnet USDC via the [Circle faucet](https://faucet.circle.com/).
+   This creates two EVM wallets (seller and buyer) and writes the seller address and both private keys to `.env.local`. It also adds a random `SESSION_SECRET` (used to sign dashboard sessions) if you do not have one yet. Follow the on-screen instructions to fund the buyer wallet with testnet USDC via the [Circle faucet](https://faucet.circle.com/).
 
 4. Set up the local Supabase database (requires Docker Desktop installed and running):
 
    ```bash
-   npx supabase start
-   npx supabase migration up
+   npm run db:start
    ```
 
-   The output of `npx supabase start` will display the Supabase URL and API keys needed for your `.env.local`.
+   This starts Supabase in Docker and applies the migrations in `supabase/migrations`. The output shows the Supabase URL and API keys needed for your `.env.local`; run `npm run db:status` to see them again.
 
 5. Start the development server:
 
@@ -113,6 +113,17 @@ The seller exposes several x402-protected API routes at different price points:
 
 Each endpoint returns `402 Payment Required` for unpaid requests. The buyer agent automatically signs the authorization and retries with the payment signature to receive the content.
 
+## Upgrading
+
+Changes that require action on an existing deployment:
+
+- **Add `SESSION_SECRET`** (16+ random characters; `npm run generate-wallets` creates one). Dashboard sign-in is refused until it is set. Sessions used to be the fixed cookie value `authenticated`, which anyone could copy; they are now signed and expire after a day. Everyone is signed out once.
+- **`/api/gateway/balance` and `/api/gateway/withdraw` now require a signed-in session.** They were reachable by anyone who knew the URL, and the withdraw endpoint sends the seller's Gateway balance to any address it is given.
+- **Rename** `SUPABASE_SERVICE_ROLE_KEY` to `SUPABASE_SECRET_KEY`. The old name is no longer read.
+- **Remove** `BUYER_ADDRESS` and `OPENAI_API_KEY`. They are no longer used.
+- **Apply the new migration** (`npm run db:start` locally, `npm run supabase -- db push` on a hosted project). It drops the unused `pg_graphql` extension.
+- `SELLER_ADDRESS` is now validated. A missing or malformed value makes the paywalled endpoints answer `500` instead of quoting a payment to `undefined`.
+
 ## Environment Variables
 
 Copy `.env.example` to `.env.local` and fill in the required values:
@@ -126,6 +137,9 @@ SUPABASE_SECRET_KEY=your-secret-key
 # x402 / Circle Nanopayments
 SELLER_ADDRESS=0xYourWalletAddress
 SELLER_PRIVATE_KEY=0xYourSellerPrivateKey
+
+# Signs dashboard sessions (16+ characters)
+SESSION_SECRET=your-long-random-secret
 
 # Buyer wallet (funds the payment agent)
 BUYER_PRIVATE_KEY=0xYourBuyerPrivateKey
@@ -142,18 +156,20 @@ BUYER_PRIVATE_KEY=0xYourBuyerPrivateKey
 | `SUPABASE_SECRET_KEY` | Server-side | Supabase secret key, used to record payment events and withdrawals. |
 | `SELLER_ADDRESS` | Server-side | EVM wallet address that receives USDC payments. Also used for Gateway balance queries. |
 | `SELLER_PRIVATE_KEY` | Server-side | Seller wallet private key, used for withdrawals. |
+| `SESSION_SECRET` | Server-side | Signs dashboard session cookies. Required to sign in; 16+ random characters. |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Server-side | Optional. Override the demo login (`admin@example.com` / `123456`). |
 | `BUYER_PRIVATE_KEY` | Agent | Buyer wallet private key. The agent uses it to fund its throwaway wallet. |
 | `BASE_URL` | Agent | Optional. Base URL of the seller app. Defaults to `http://localhost:3000`. |
 | `DEPOSIT_AMOUNT` | Agent | Optional. USDC amount moved into Gateway on each deposit. Defaults to `1`. |
 | `VERCEL_URL` | Server-side | Optional. Set automatically on Vercel. Used as the app's base URL for metadata; defaults to `http://localhost:3000`. |
 
-> **Tip:** Run `npm run generate-wallets` to auto-generate the `SELLER_ADDRESS`, `SELLER_PRIVATE_KEY`, and `BUYER_PRIVATE_KEY` values.
+> **Tip:** Run `npm run generate-wallets` to auto-generate `SELLER_ADDRESS`, `SELLER_PRIVATE_KEY`, `BUYER_PRIVATE_KEY` and `SESSION_SECRET`.
 
 ## User Accounts
 
 ### Demo Account
 
-The app uses a hardcoded demo account for local development:
+The app has a single demo account for local development (override it with `ADMIN_EMAIL` and `ADMIN_PASSWORD`; do not ship the default):
 
 | Email | Password |
 | --- | --- |
@@ -165,12 +181,29 @@ The app uses a hardcoded demo account for local development:
 - `npm run build` — Create a production build
 - `npm run start` — Start the production server
 - `npm run lint` — Run ESLint
+- `npm test` — Run the unit tests (no services needed)
+- `npm run test:integration` — Run database tests against the local Supabase (`npm run db:start` first)
+- `npm run db:start` / `db:stop` / `db:status` / `db:reset` — Manage the local Supabase instance
 - `npm run generate-wallets` — Generate seller and buyer wallets and write them to `.env.local`
 - `npm run agent` — Run the payment agent against the local app
+
+## Testing
+
+- `npm test` runs the unit tests in `tests/unit`. They mock Supabase and the Circle SDKs, so they need no credentials or Docker. They cover session signing, the proxy, login, the withdraw and balance endpoints, and the x402 paywall.
+- `npm run test:integration` runs `tests/integration` against the **local** Supabase stack: who can read and write `payment_events` and `withdrawals`, and that the GraphQL endpoint is gone. It reads connection settings from `.env.local`.
 
 ## Security & Usage Model
 
 This sample application:
 - Assumes testnet usage only
 - Handles secrets via environment variables
+- Signs dashboard sessions and requires one for the seller APIs
 - Is not intended for production use without modification
+
+Known limitations to address before any production use:
+- **Payment history is public.** The dashboard reads `payment_events` and `withdrawals` in the browser with the publishable key, so anyone with that key can read every payer address, amount and withdrawal destination (they cannot write). Production code should serve the dashboard through authenticated server routes instead.
+- **One shared demo login.** Replace it with real authentication (for example Supabase Auth) and make the withdraw endpoint require more than a session, such as re-authentication or a fixed withdrawal address.
+- **Withdrawals are not serialized.** Two withdrawals submitted at once are both checked against the same balance. The one that cannot be covered is expected to fail at Gateway, but this app does not prevent the attempt (or its failed record).
+- **Payment is taken before the handler runs.** If a paywalled handler throws after settlement, the buyer has paid and receives a `500`.
+
+See `SECURITY.md` for vulnerability reporting guidelines. Please report issues privately via Circle's bug bounty program.
