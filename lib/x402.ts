@@ -43,7 +43,6 @@ interface PaymentPayload {
 }
 
 function buildPaymentRequirements(price: string) {
-  // Parse dollar amount to USDC atomic units (6 decimals)
   const amount = Math.round(parseFloat(price.replace("$", "")) * 1_000_000);
 
   return {
@@ -61,12 +60,7 @@ function buildPaymentRequirements(price: string) {
   };
 }
 
-/**
- * Wraps a Next.js route handler with Circle Gateway payment verification.
- *
- * Follows fred-mvp's approach: manually constructs payment requirements with
- * the Gateway batching `extra` field and calls BatchFacilitatorClient directly.
- */
+// Wraps a route handler with Circle Gateway payment verification.
 export function withGateway(
   handler: (req: NextRequest) => Promise<NextResponse>,
   price: string,
@@ -77,7 +71,6 @@ export function withGateway(
   return async (req: NextRequest) => {
     const paymentSignature = req.headers.get("payment-signature");
 
-    // No payment — return 402 with Gateway batching payment requirements
     if (!paymentSignature) {
       console.log(`[x402] 402 Payment Required: ${endpoint}`);
 
@@ -102,7 +95,6 @@ export function withGateway(
       });
     }
 
-    // Payment present — verify and settle via Circle Gateway
     try {
       const paymentPayload: PaymentPayload = JSON.parse(
         Buffer.from(paymentSignature, "base64").toString("utf-8"),
@@ -141,7 +133,6 @@ export function withGateway(
         );
       }
 
-      // Record payment event in Supabase
       const amountUsdc = (
         Number(requirements.amount) / 1e6
       ).toString();
@@ -164,10 +155,8 @@ export function withGateway(
         `[x402] Payment settled: ${endpoint} — ${amountUsdc} USDC from ${payer}`,
       );
 
-      // Call the actual route handler
       const response = await handler(req);
 
-      // Forward settlement info to the client
       const settleResponseHeader = Buffer.from(
         JSON.stringify({
           success: true,
