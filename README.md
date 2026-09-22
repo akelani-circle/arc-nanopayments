@@ -1,35 +1,45 @@
-# Arc Nanopayments Demo
+# Arc Nanopayments
 
-Demonstrate gasless USDC nanopayments using [Circle Nanopayments](https://www.circle.com/nanopayments) on Arc. A **LangChain agent** acts as the buyer, autonomously paying for paywalled resources, while a **Next.js web app** acts as the seller, exposing x402-protected endpoints and providing a seller dashboard to monitor payments and withdraw earnings.
+Demonstrate gasless USDC nanopayments using [Circle Nanopayments](https://www.circle.com/nanopayments) on Arc. A **payment agent script** acts as the buyer, paying for paywalled resources in a loop, while a **Next.js web app** acts as the seller, exposing x402-protected endpoints and providing a seller dashboard to monitor payments and withdraw earnings.
 
 Circle Gateway batches many signed offchain authorizations into a single onchain settlement, enabling economically viable sub-cent payments.
 
-<img alt="Arc Nanopayments Demo dashboard" src="public/screenshot.png" />
+<img alt="Arc Nanopayments dashboard" src="public/screenshot.png" />
 
 ## Table of Contents
 
+- [Features](#features)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
 - [How It Works](#how-it-works)
 - [Paywalled Endpoints](#paywalled-endpoints)
-- [Seller Dashboard](#seller-dashboard)
 - [Environment Variables](#environment-variables)
-- [Demo Credentials](#demo-credentials)
+- [User Accounts](#user-accounts)
+- [Available Scripts](#available-scripts)
+- [Security & Usage Model](#security--usage-model)
+
+## Features
+
+- **Paywalled API** (`/api/premium/*`) — Four x402-protected endpoints priced from $0.0003 to $0.03 in USDC. See [Paywalled Endpoints](#paywalled-endpoints).
+- **Payment agent** (`agent.mts`) — Funds a fresh wallet from the buyer wallet, deposits USDC into Gateway, and pays the endpoints about once per second. Supports a spending limit.
+- **Sign in** (`/`) — Demo login for the seller dashboard. See [User Accounts](#user-accounts).
+- **Payments table** (`/dashboard`) — Real-time list of incoming nanopayments with filtering and sorting, linked to the [Arc Testnet Explorer](https://testnet.arcscan.app).
+- **Gateway balance** (`TopBarGatewayControls`) — Top-bar badge with the seller's available Gateway balance, plus a dialog with total, withdrawing, withdrawable, and wallet USDC balances.
+- **Withdraw** (`WithdrawDialog`) — Withdraw available USDC from Gateway to an address on any supported testnet (Arc Testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Optimism Sepolia, Avalanche Fuji, Polygon Amoy).
 
 ## Prerequisites
 
 - **Node.js v22+** — Install via [nvm](https://github.com/nvm-sh/nvm)
 - **Supabase CLI** — Install via `npm install -g supabase` or see [Supabase CLI docs](https://supabase.com/docs/guides/cli/getting-started)
-- **Docker Desktop** (only if using the local Supabase path) — [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
-- *(Optional)* An **[OpenAI API key](https://platform.openai.com/api-keys)** — enables the LLM-driven payment agent. Without it, the agent runs in mock mode with scripted tool calls.
+- **Docker Desktop** — [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ## Getting Started
 
 1. Clone the repository and install dependencies:
 
    ```bash
-   git clone https://github.com/akelani-circle/arc-nanopayments-demo.git
-   cd arc-nanopayments-demo
+   git clone git@github.com:akelani-circle/arc-nanopayments.git
+   cd arc-nanopayments
    npm install
    ```
 
@@ -47,14 +57,9 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
    npm run generate-wallets
    ```
 
-   This creates two EVM wallets (seller and buyer) and writes the addresses and private keys to `.env.local`. Follow the on-screen instructions to fund the buyer wallet with testnet USDC via the [Circle faucet](https://faucet.circle.com/).
+   This creates two EVM wallets (seller and buyer) and writes the seller address and both private keys to `.env.local`. Follow the on-screen instructions to fund the buyer wallet with testnet USDC via the [Circle faucet](https://faucet.circle.com/).
 
-4. Set up the database — Choose one of the two paths below:
-
-   <details>
-   <summary><strong>Path 1: Local Supabase (Docker)</strong></summary>
-
-   Requires Docker Desktop installed and running.
+4. Set up the local Supabase database (requires Docker Desktop installed and running):
 
    ```bash
    npx supabase start
@@ -62,22 +67,6 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
    ```
 
    The output of `npx supabase start` will display the Supabase URL and API keys needed for your `.env.local`.
-
-   </details>
-
-   <details>
-   <summary><strong>Path 2: Remote Supabase (Cloud)</strong></summary>
-
-   Requires a [Supabase](https://supabase.com/) account and project.
-
-   ```bash
-   npx supabase link --project-ref <your-project-ref>
-   npx supabase db push
-   ```
-
-   Retrieve your project URL and API keys from the Supabase dashboard under **Settings > API**.
-
-   </details>
 
 5. Start the development server:
 
@@ -87,17 +76,13 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 
    The app will be available at `http://localhost:3000`.
 
-6. Run the AI payment agent:
+6. Run the payment agent:
 
    ```bash
    npm run agent
    ```
 
-   The agent uses the buyer wallet to purchase resources from the x402-protected premium endpoints, paying with USDC on the Arc Testnet. If `OPENAI_API_KEY` is set, the agent uses the LLM to decide which tools to call; otherwise it falls back to a scripted mock run. You can optionally pass a custom query:
-
-   ```bash
-   npm run agent -- "Buy me a quote at http://localhost:3000/api/premium/quote"
-   ```
+   The agent creates a throwaway wallet, funds it with gas and USDC from the buyer wallet, deposits `DEPOSIT_AMOUNT` USDC into Gateway, and then pays the x402-protected endpoints in turn, about once per second, on Arc Testnet. It tops up Gateway when the balance drops below 0.5 USDC. You can run several agents in parallel.
 
    To set a USDC spending limit, use the `--limit` flag. The agent will pause when the limit is reached and prompt for additional allowance:
 
@@ -110,7 +95,7 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 - Built with [Next.js](https://nextjs.org/) App Router and [Supabase](https://supabase.com/)
 - Uses the [x402 protocol](https://www.x402.org/) for HTTP 402 nanopayments with USDC on the [Arc Network](https://arc.circle.com/)
 - Uses [Circle's x402 batching SDK](https://www.npmjs.com/package/@circle-fin/x402-batching) (`GatewayClient`) for gasless payment facilitation
-- Includes an AI payment agent built with [LangChain](https://js.langchain.com/) and [Deep Agents](https://www.npmjs.com/package/deepagents) that can check balances, deposit USDC into Gateway, verify endpoint support, and autonomously pay for x402-protected resources
+- Includes a payment agent script that uses `GatewayClient` to deposit USDC into Gateway and pay x402-protected resources
 - Seller dashboard with real-time payment monitoring, Gateway balance display, and cross-chain withdrawal support
 - Payment events and withdrawals are persisted to Supabase with real-time subscriptions
 - Styled with [Tailwind CSS](https://tailwindcss.com) and components from [shadcn/ui](https://ui.shadcn.com/)
@@ -128,14 +113,6 @@ The seller exposes several x402-protected API routes at different price points:
 
 Each endpoint returns `402 Payment Required` for unpaid requests. The buyer agent automatically signs the authorization and retries with the payment signature to receive the content.
 
-## Seller Dashboard
-
-The dashboard at `/dashboard` provides:
-
-- **Gateway Balance** — Top-bar badge showing the seller's available Gateway balance, with a detail dialog for total, withdrawing, withdrawable, and wallet USDC balances
-- **Payments Table** — Real-time list of incoming nanopayments with filtering and sorting, linked to [Arc Testnet Explorer](https://testnet.arcscan.app)
-- **Withdraw Dialog** — Withdraw available USDC from Gateway to a wallet address on any supported testnet chain (Arc Testnet, Base Sepolia, Ethereum Sepolia, Arbitrum Sepolia, Optimism Sepolia, Avalanche Fuji, Polygon Amoy)
-
 ## Environment Variables
 
 Copy `.env.example` to `.env.local` and fill in the required values:
@@ -143,41 +120,53 @@ Copy `.env.example` to `.env.local` and fill in the required values:
 ```bash
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=your-project-url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-or-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
+SUPABASE_SECRET_KEY=your-secret-key
 
 # x402 / Circle Nanopayments
 SELLER_ADDRESS=0xYourWalletAddress
 SELLER_PRIVATE_KEY=0xYourSellerPrivateKey
 
-# Buyer wallet (for the payment agent)
-BUYER_ADDRESS=0xYourBuyerWalletAddress
+# Buyer wallet (funds the payment agent)
 BUYER_PRIVATE_KEY=0xYourBuyerPrivateKey
 
-# AI Payment Agent (optional — omit to run in mock mode)
-# OPENAI_API_KEY=your-openai-api-key
+# Payment agent (optional)
+# BASE_URL=http://localhost:3000
+# DEPOSIT_AMOUNT=1
 ```
 
 | Variable | Scope | Purpose |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase project URL. |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public | Supabase anonymous / publishable key. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-side | Supabase service-role key, used to record payment events and withdrawals. |
-| `SELLER_ADDRESS` | Server-side | EVM wallet address for receiving USDC payments. |
-| `SELLER_PRIVATE_KEY` | Server-side | Seller wallet private key, used for Gateway balance queries and withdrawals. |
-| `BUYER_ADDRESS` | Agent | Buyer wallet address for making payments. |
-| `BUYER_PRIVATE_KEY` | Agent | Buyer wallet private key for signing payment authorizations. |
-| `OPENAI_API_KEY` | Agent | *(Optional)* OpenAI API key. If omitted, the agent runs in mock mode with scripted tool calls. |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Public | Supabase publishable key. |
+| `SUPABASE_SECRET_KEY` | Server-side | Supabase secret key, used to record payment events and withdrawals. |
+| `SELLER_ADDRESS` | Server-side | EVM wallet address that receives USDC payments. Also used for Gateway balance queries. |
+| `SELLER_PRIVATE_KEY` | Server-side | Seller wallet private key, used for withdrawals. |
+| `BUYER_PRIVATE_KEY` | Agent | Buyer wallet private key. The agent uses it to fund its throwaway wallet. |
+| `BASE_URL` | Agent | Optional. Base URL of the seller app. Defaults to `http://localhost:3000`. |
+| `DEPOSIT_AMOUNT` | Agent | Optional. USDC amount moved into Gateway on each deposit. Defaults to `1`. |
+| `VERCEL_URL` | Server-side | Optional. Set automatically on Vercel. Used as the app's base URL for metadata; defaults to `http://localhost:3000`. |
 
-> **Tip:** Run `npm run generate-wallets` to auto-generate the `SELLER_ADDRESS`, `SELLER_PRIVATE_KEY`, `BUYER_ADDRESS`, and `BUYER_PRIVATE_KEY` values.
+> **Tip:** Run `npm run generate-wallets` to auto-generate the `SELLER_ADDRESS`, `SELLER_PRIVATE_KEY`, and `BUYER_PRIVATE_KEY` values.
 
-## Demo Credentials
+## User Accounts
+
+### Demo Account
 
 The app uses a hardcoded demo account for local development:
 
 | Email | Password |
 | --- | --- |
 | `admin@example.com` | `123456` |
+
+## Available Scripts
+
+- `npm run dev` — Start the Next.js development server
+- `npm run build` — Create a production build
+- `npm run start` — Start the production server
+- `npm run lint` — Run ESLint
+- `npm run generate-wallets` — Generate seller and buyer wallets and write them to `.env.local`
+- `npm run agent` — Run the payment agent against the local app
 
 ## Security & Usage Model
 
