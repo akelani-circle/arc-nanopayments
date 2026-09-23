@@ -27,13 +27,11 @@ const generateWallet = (label: string) => {
   return { address: account.address, privateKey };
 };
 
-// --- Seller (platform operator) ---
 const seller = generateWallet("Seller (platform operator)");
 
-// --- Buyer (funder wallet — agents spawn ephemeral wallets from this) ---
+// Buyer: funder wallet that agents spawn ephemeral wallets from.
 const buyer = generateWallet("Buyer (funder wallet)");
 
-// --- Write to .env.local ---
 const lines: Record<string, string> = {
   SELLER_ADDRESS: seller.address,
   SELLER_PRIVATE_KEY: seller.privateKey,

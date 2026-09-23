@@ -31,12 +31,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Logged-in user trying to access sign-in page -> redirect to dashboard
   if (pathname === "/" && authenticated) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // Logged-out user trying to access protected routes -> redirect to sign-in
   if (pathname.startsWith("/dashboard") && !authenticated) {
     return NextResponse.redirect(new URL("/", request.url));
   }

@@ -108,7 +108,6 @@ export async function POST(req: NextRequest) {
 
   const isCrossChain = destinationChain !== "arcTestnet";
 
-  // Pre-check: ensure the seller wallet has native tokens for gas on source chain
   try {
     const balances = await gateway.getBalances();
     if (
@@ -136,7 +135,6 @@ export async function POST(req: NextRequest) {
     console.error("Failed to check balances before withdraw:", balanceError);
   }
 
-  // Pre-check: for cross-chain withdrawals, verify gas on the destination chain
   if (isCrossChain) {
     try {
       const destGateway = new GatewayClient({
@@ -165,7 +163,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Insert a pending withdrawal record
   const { data: withdrawal, error: insertError } = await supabase
     .from("withdrawals")
     .insert({
@@ -217,7 +214,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error);
 
-    // Mark withdrawal as failed
     const { error: failError } = await supabase
       .from("withdrawals")
       .update({ status: "failed" })
@@ -229,7 +225,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Translate common on-chain errors into user-friendly messages
     const chainLabel =
       SUPPORTED_CHAIN_LABELS[destinationChain] ?? destinationChain;
     let message = raw;
