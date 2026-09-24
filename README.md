@@ -1,10 +1,10 @@
-# Arc Nanopayments Demo
+# Arc Nanopayments
 
 Demonstrate gasless USDC nanopayments using [Circle Nanopayments](https://www.circle.com/nanopayments) on Arc. A **payment agent script** acts as the buyer, paying for paywalled resources in a loop, while a **Next.js web app** acts as the seller, exposing x402-protected endpoints and providing a seller dashboard to monitor payments and withdraw earnings.
 
 Circle Gateway batches many signed offchain authorizations into a single onchain settlement, enabling economically viable sub-cent payments.
 
-<img alt="Arc Nanopayments Demo dashboard" src="public/screenshot.png" />
+<img alt="Arc Nanopayments dashboard" src="public/screenshot.png" />
 
 ## Table of Contents
 
@@ -21,16 +21,15 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 ## Prerequisites
 
 - **Node.js v22+** — Install via [nvm](https://github.com/nvm-sh/nvm)
-- **Supabase CLI** — Install via `npm install -g supabase` or see [Supabase CLI docs](https://supabase.com/docs/guides/cli/getting-started)
-- **Docker Desktop** (only if using the local Supabase path) — [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
+- **Docker Desktop** — Runs Supabase locally. [Install Docker Desktop](https://www.docker.com/products/docker-desktop/)
 
 ## Getting Started
 
 1. Clone the repository and install dependencies:
 
    ```bash
-   git clone https://github.com/akelani-circle/arc-nanopayments-demo.git
-   cd arc-nanopayments-demo
+   git clone git@github.com:akelani-circle/arc-nanopayments.git
+   cd arc-nanopayments
    npm install
    ```
 
@@ -50,12 +49,7 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
 
    This creates two EVM wallets (seller and buyer) and writes the seller address and both private keys to `.env.local`. It also adds a random `SESSION_SECRET` (used to sign dashboard sessions) if you do not have one yet. Follow the on-screen instructions to fund the buyer wallet with testnet USDC via the [Circle faucet](https://faucet.circle.com/).
 
-4. Set up the database — Choose one of the two paths below:
-
-   <details>
-   <summary><strong>Path 1: Local Supabase (Docker)</strong></summary>
-
-   Requires Docker Desktop installed and running.
+4. Start the local Supabase instance (requires Docker Desktop running):
 
    ```bash
    npx supabase start
@@ -63,22 +57,6 @@ Circle Gateway batches many signed offchain authorizations into a single onchain
    ```
 
    The output of `npx supabase start` will display the Supabase URL and API keys needed for your `.env.local`.
-
-   </details>
-
-   <details>
-   <summary><strong>Path 2: Remote Supabase (Cloud)</strong></summary>
-
-   Requires a [Supabase](https://supabase.com/) account and project.
-
-   ```bash
-   npx supabase link --project-ref <your-project-ref>
-   npx supabase db push
-   ```
-
-   Retrieve your project URL and API keys from the Supabase dashboard under **Settings > API**.
-
-   </details>
 
 5. Start the development server:
 
