@@ -17,16 +17,25 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { SESSION_COOKIE, getSessionSecret, verifySessionToken } from "@/lib/session";
 
-export function proxy(request: NextRequest) {
-  const session = request.cookies.get("session")?.value;
+export async function proxy(request: NextRequest) {
+  const authenticated = await verifySessionToken(
+    request.cookies.get(SESSION_COOKIE)?.value,
+    getSessionSecret(),
+  );
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/" && session === "authenticated") {
+  // Seller-only APIs (balance, withdrawals): answer 401 instead of redirecting.
+  if (pathname.startsWith("/api/gateway") && !authenticated) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (pathname === "/" && authenticated) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  if (pathname.startsWith("/dashboard") && session !== "authenticated") {
+  if (pathname.startsWith("/dashboard") && !authenticated) {
     return NextResponse.redirect(new URL("/", request.url));
   }
 
@@ -34,5 +43,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/", "/dashboard/:path*"],
+  matcher: ["/", "/dashboard/:path*", "/api/gateway/:path*"],
 };
