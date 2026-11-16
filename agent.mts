@@ -214,8 +214,12 @@ console.log(
   `\nTarget: 1 transaction/second across ${endpoints.length} endpoints\n`,
 );
 
-// Poll every 30s and redeposit asynchronously so payments keep flowing.
-balanceInterval = setInterval(checkAndRedeposit, 30_000);
+// Balance checks (every 30s) and payments both start inside startPaymentLoop()
+// below, which is also re-invoked after a spending-limit pause. Do not start
+// balanceInterval here too -- startPaymentLoop() already schedules it, and
+// assigning it twice orphans this first interval (its handle is immediately
+// overwritten, so it can never be cleared and keeps firing for the life of
+// the process, doubling the effective redeposit-check frequency).
 
 async function handleLimitReached() {
   if (spendingLimit === null) return;
