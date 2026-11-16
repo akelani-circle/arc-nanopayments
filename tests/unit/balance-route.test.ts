@@ -62,7 +62,7 @@ describe("GET /api/gateway/balance", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       wallet: { balance: "2.5" },
-      gateway: { total: "2.000000", available: "1.5", withdrawing: "0.5", withdrawable: "1.0" },
+      gateway: { total: "2.000000", available: "1.5", withdrawing: "0.5", withdrawable: "1" },
     });
   });
 
