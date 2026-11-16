@@ -1,6 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 const envPath = path.resolve(".env.local");
 
@@ -26,23 +27,26 @@ const generateWallet = (label: string) => {
   return { address: account.address, privateKey };
 };
 
-// --- Seller (platform operator) ---
 const seller = generateWallet("Seller (platform operator)");
 
-// --- Buyer (funder wallet — agents spawn ephemeral wallets from this) ---
+// Buyer: funder wallet that agents spawn ephemeral wallets from.
 const buyer = generateWallet("Buyer (funder wallet)");
 
-// --- Write to .env.local ---
 const lines: Record<string, string> = {
   SELLER_ADDRESS: seller.address,
   SELLER_PRIVATE_KEY: seller.privateKey,
-  BUYER_ADDRESS: buyer.address,
   BUYER_PRIVATE_KEY: buyer.privateKey,
 };
 
 let content = fs.existsSync(envPath)
   ? fs.readFileSync(envPath, "utf-8")
   : "";
+
+// Signs dashboard sessions. Created once; never rotated here, or every
+// signed-in browser would be logged out each time wallets are regenerated.
+if (!/^SESSION_SECRET=.{16,}$/m.test(content)) {
+  lines.SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+}
 
 for (const [key, value] of Object.entries(lines)) {
   const line = `${key}=${value}`;
@@ -63,7 +67,11 @@ ${bold("Next steps:")}
 
      Paste this address: ${cyan(buyer.address)}
 
-  ${dim("2.")} Start the dev server:        ${cyan("npm run dev")}
-  ${dim("3.")} Run payment agents:          ${cyan("npm run agent")}
+  ${dim("2.")} Set up Supabase before starting the app.
+     Complete the local or remote Supabase steps in the README and fill in the
+     required Supabase values in ${cyan(".env.local")}.
+
+  ${dim("3.")} Start the dev server:        ${cyan("npm run dev")}
+  ${dim("4.")} Run payment agents:          ${cyan("npm run agent")}
      Run as many in parallel as you like — each spawns its own ephemeral wallet.
 `);

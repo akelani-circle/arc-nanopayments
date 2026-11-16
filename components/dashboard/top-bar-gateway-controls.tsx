@@ -49,8 +49,11 @@ export function TopBarGatewayControls() {
         balancesRef.current = next;
         setBalances(next);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to fetch gateway balance:", err);
+      toast.error("Failed to load gateway balance", {
+        description: err instanceof Error ? err.message : "Network error",
+      });
     } finally {
       setLoading(false);
     }
@@ -64,8 +67,7 @@ export function TopBarGatewayControls() {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "payment_events" },
         () => {
-          // Gateway offchain balance is credited immediately after settlement,
-          // so a single refetch is sufficient.
+          // Gateway credits the offchain balance immediately, so one refetch is enough.
           fetchBalances();
         },
       )
@@ -73,7 +75,6 @@ export function TopBarGatewayControls() {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "withdrawals" },
         () => {
-          // Wallet USDC balance may change after a withdrawal completes.
           fetchBalances();
         },
       )
@@ -95,7 +96,7 @@ export function TopBarGatewayControls() {
       <div className="flex items-center gap-4 min-w-0">
         <span className="font-semibold text-sm truncate">Arc Nanopayments</span>
         <WithdrawDialog
-          maxAvailable={balances?.gateway.available ?? "0"}
+          maxAvailable={balances?.gateway.available ?? null}
           onWithdraw={fetchBalances}
         />
       </div>

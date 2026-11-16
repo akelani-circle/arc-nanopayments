@@ -11,7 +11,6 @@ import { arcTestnet } from "viem/chains";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import * as readline from "node:readline/promises";
 
-// --- Parse CLI args ---
 function parseArgs() {
   const args = process.argv.slice(2);
   let spendingLimit: number | null = null;
@@ -60,7 +59,6 @@ async function promptForAllowance(): Promise<number> {
   }
 }
 
-// --- Funder wallet (the one you funded via Circle faucet) ---
 const funderKey = process.env.BUYER_PRIVATE_KEY as `0x${string}` | undefined;
 if (!funderKey) {
   console.error(
@@ -70,7 +68,7 @@ if (!funderKey) {
 }
 
 const ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000" as const;
-const ARC_TESTNET_RPC = "https://rpc.testnet.arc.network";
+const ARC_TESTNET_RPC = "https://rpc.testnet.arc.io";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:3000";
 const DEPOSIT_AMOUNT = process.env.DEPOSIT_AMOUNT ?? "1";
@@ -88,12 +86,24 @@ const endpoints = [
   { url: `${BASE_URL}/api/premium/agent-task`, method: "GET" as const },
 ];
 
-// --- Generate ephemeral wallet ---
+const ARC_TESTNET_EXPLORER_TX_BASE = "https://testnet.arcscan.app/tx/";
+const txUrl = (hash: string) => `${ARC_TESTNET_EXPLORER_TX_BASE}${hash}`;
+
+function logGatewayBalances(label: string, balances: Awaited<ReturnType<GatewayClient["getBalances"]>>) {
+  console.log(
+    `${label}: wallet ${balances.wallet.formatted} USDC | gateway available ${balances.gateway.formattedAvailable} | total ${balances.gateway.formattedTotal}`,
+  );
+}
+
+function logTx(label: string, hash: string) {
+  console.log(`  ${label}: ${hash}`);
+  console.log(`    Explorer: ${txUrl(hash)}`);
+}
+
 const ephemeralKey = generatePrivateKey();
 const ephemeralAccount = privateKeyToAccount(ephemeralKey);
 console.log(`Ephemeral agent wallet: ${ephemeralAccount.address}`);
 
-// --- Fund the ephemeral wallet from the funder ---
 const funderAccount = privateKeyToAccount(funderKey);
 const publicClient = createPublicClient({
   chain: arcTestnet,
@@ -111,8 +121,7 @@ console.log(
 
 const usdcAmount = parseUnits(DEPOSIT_AMOUNT, 6);
 
-// Retry helper for nonce collisions when multiple agents fund from the same wallet concurrently.
-// On collision the other agent's tx confirms first, shifting the nonce — a short retry resolves it.
+// Retry on nonce collisions when several agents fund from the same wallet.
 async function withNonceRetry<T>(fn: () => Promise<T>, label: string): Promise<T> {
   const MAX_RETRIES = 5;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -133,14 +142,13 @@ async function withNonceRetry<T>(fn: () => Promise<T>, label: string): Promise<T
   throw new Error("unreachable");
 }
 
-// Send native USDC for gas, wait for confirmation, then send ERC-20 USDC.
-// Sequential + retry ensures correct nonce ordering even with concurrent agents.
+// Gas first and confirmed, then the ERC-20 transfer, so nonces stay ordered under concurrency.
 const gasTxHash = await withNonceRetry(
   () => funderWallet.sendTransaction({ to: ephemeralAccount.address, value: GAS_FUND_AMOUNT }),
   "Gas tx",
 );
 await publicClient.waitForTransactionReceipt({ hash: gasTxHash });
-console.log(`  Gas funded (${gasTxHash.slice(0, 10)}...)`);
+logTx("Gas funded", gasTxHash);
 
 const usdcTxHash = await withNonceRetry(
   () => funderWallet.writeContract({
@@ -152,10 +160,8 @@ const usdcTxHash = await withNonceRetry(
   "USDC tx",
 );
 await publicClient.waitForTransactionReceipt({ hash: usdcTxHash });
-console.log(`  USDC transferred (${usdcTxHash.slice(0, 10)}...)`);
+logTx("USDC transferred", usdcTxHash);
 
-
-// --- Create GatewayClient with the ephemeral wallet ---
 const gateway = new GatewayClient({
   chain: "arcTestnet",
   privateKey: ephemeralKey,
@@ -167,22 +173,24 @@ let redepositing = false;
 let paymentInterval: ReturnType<typeof setInterval>;
 let balanceInterval: ReturnType<typeof setInterval>;
 
-// Auto-redeposit when balance drops below 0.5 USDC (atomic units).
-// Leaves plenty of runway for payments while the deposit tx confirms.
+// Redeposit once the balance drops below 0.5 USDC (atomic units).
 const REDEPOSIT_THRESHOLD = 500_000n;
 
 async function depositToGateway() {
   console.log(`Depositing ${DEPOSIT_AMOUNT} USDC into Gateway Wallet...`);
+  const before = await gateway.getBalances();
+  logGatewayBalances("  Balance before deposit", before);
   const result = await gateway.deposit(DEPOSIT_AMOUNT);
-  console.log(`Deposit complete! TX: ${result.depositTxHash}`);
+  if (result.approvalTxHash) {
+    logTx("Approval tx", result.approvalTxHash);
+  }
+  console.log(`Deposit complete! Added ${result.formattedAmount} USDC to Gateway.`);
+  logTx("Deposit tx", result.depositTxHash);
   const updated = await gateway.getBalances();
-  console.log(
-    `Gateway available balance: ${updated.gateway.formattedAvailable}`,
-  );
+  logGatewayBalances("  Balance after deposit", updated);
 }
 
 async function refundAndRedeposit() {
-  // Transfer more USDC from funder to ephemeral, then deposit into Gateway
   const txHash = await withNonceRetry(
     () => funderWallet.writeContract({
       address: ARC_TESTNET_USDC,
@@ -193,6 +201,7 @@ async function refundAndRedeposit() {
     "Redeposit tx",
   );
   await publicClient.waitForTransactionReceipt({ hash: txHash });
+  logTx("Redeposit USDC transfer", txHash);
   await depositToGateway();
 }
 
@@ -205,11 +214,9 @@ async function checkAndRedeposit() {
       console.log(
         `\nGateway balance low (${balances.gateway.formattedAvailable}), redepositing...`,
       );
-      // Check if ephemeral wallet has USDC to deposit directly
       if (balances.wallet.balance > 0n) {
         await depositToGateway();
       } else {
-        // Pull more from the funder
         await refundAndRedeposit();
       }
     }
@@ -220,16 +227,18 @@ async function checkAndRedeposit() {
   }
 }
 
-// Initial Gateway deposit
 await depositToGateway();
 
 console.log(
   `\nTarget: 1 transaction/second across ${endpoints.length} endpoints\n`,
 );
 
-// Check balance every 30 seconds and redeposit if low.
-// Runs fully async — payments continue uninterrupted during deposit.
-balanceInterval = setInterval(checkAndRedeposit, 30_000);
+// Balance checks (every 30s) and payments both start inside startPaymentLoop()
+// below, which is also re-invoked after a spending-limit pause. Do not start
+// balanceInterval here too -- startPaymentLoop() already schedules it, and
+// assigning it twice orphans this first interval (its handle is immediately
+// overwritten, so it can never be cleared and keeps firing for the life of
+// the process, doubling the effective redeposit-check frequency).
 
 async function handleLimitReached() {
   if (spendingLimit === null) return;
@@ -238,7 +247,6 @@ async function handleLimitReached() {
   clearInterval(paymentInterval);
   clearInterval(balanceInterval);
 
-  // Wait for in-flight payments to settle
   while (inFlight > 0) {
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -278,6 +286,10 @@ function startPaymentLoop() {
         console.log(
           `#${index} ${ep.method} ${ep.url.split("/").pop()} -> ${result.formattedAmount} USDC (${ms}ms) [in-flight: ${inFlight}]${limitInfo}`,
         );
+        if (result.transaction) {
+          console.log(`   Settlement tx: ${result.transaction}`);
+          console.log(`   Explorer: ${txUrl(result.transaction)}`);
+        }
 
         if (spendingLimit !== null && totalSpent >= spendingLimit) {
           handleLimitReached();
